@@ -1,0 +1,185 @@
+@startuml Marketplace_C4_Container
+
+!includeurl https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+LAYOUT_LEFT_RIGHT()
+LAYOUT_WITH_LEGEND()
+SHOW_LEGEND()
+
+' ============================================================
+' VISUAL STYLE — restrained, professional palette
+' ============================================================
+
+AddElementTag("user", $bgColor="#EAF6EE", $fontColor="#176B3A", $borderColor="#35A56A")
+AddElementTag("catalog", $bgColor="#EDF4FF", $fontColor="#1655A8", $borderColor="#4F8DDF")
+AddElementTag("feed", $bgColor="#F3EEFF", $fontColor="#6241A8", $borderColor="#8B68D1")
+AddElementTag("order", $bgColor="#FFF5E3", $fontColor="#9A5B00", $borderColor="#E0A23B")
+AddElementTag("payment", $bgColor="#EAF9F8", $fontColor="#147A74", $borderColor="#38B8AF")
+AddElementTag("notification", $bgColor="#FFF0F5", $fontColor="#A12566", $borderColor="#D84D8D")
+AddElementTag("gateway", $bgColor="#F1EEFF", $fontColor="#5334A2", $borderColor="#7B5CC9")
+AddElementTag("events", $bgColor="#FFF0F3", $fontColor="#A51E43", $borderColor="#E24C72")
+AddElementTag("database", $bgColor="#F7FAFD", $fontColor="#274D7F", $borderColor="#7FA7D8")
+AddElementTag("external", $bgColor="#FBF7EF", $fontColor="#77551F", $borderColor="#C9A96E")
+AddElementTag("infra", $bgColor="#F6F8FB", $fontColor="#586579", $borderColor="#95A1B5", $borderStyle=dashedLine)
+
+' ============================================================
+' PEOPLE
+' ============================================================
+
+Person(buyer, "Покупатель", "Просматривает товары, получает персональную ленту, оформляет и оплачивает заказ")
+Person(seller, "Продавец", "Управляет товарным каталогом, ценами и остатками")
+
+' ============================================================
+' MARKETPLACE
+' ============================================================
+
+System_Boundary(marketplace, "Marketplace") {
+
+    Container(api_gateway, "API Gateway", "HTTP/REST", "Единая точка входа.<br/>Маршрутизация запросов.<br/>Аутентификация и авторизация — при необходимости.", $tags="gateway")
+
+    Container(user_service, "User Service", "FastAPI", "Домен пользователей.<br/>Покупатели и продавцы.<br/>Профили, роли и настройки.", $tags="user")
+    ContainerDb(user_db, "User DB", "PostgreSQL", "Пользователи, профили, роли и настройки.", $tags="database+user")
+
+    Container(catalog_service, "Catalog Service", "FastAPI", "Домен каталога.<br/>Товары, категории, цены, доступность и остатки.", $tags="catalog")
+    ContainerDb(catalog_db, "Catalog DB", "PostgreSQL", "Товары, категории, цены и остатки.", $tags="database+catalog")
+
+    Container(feed_service, "Feed & Recommendation Service", "FastAPI / consumer", "Домен персонализации.<br/>Сигналы пользователя, кандидаты, ranking и выдача.", $tags="feed")
+    ContainerDb(feed_db, "Feed DB", "PostgreSQL", "Сигналы, профили интересов и состояние рекомендаций.", $tags="database+feed")
+
+    Container(order_service, "Order Service", "FastAPI", "Домен заказов.<br/>Создание заказа, позиции и жизненный цикл статусов.", $tags="order")
+    ContainerDb(order_db, "Order DB", "PostgreSQL", "Заказы, позиции заказа и статусы.", $tags="database+order")
+
+    Container(payment_service, "Payment Service", "FastAPI / consumer", "Домен платежей.<br/>Платёжные операции, попытки, статусы и транзакции.", $tags="payment")
+    ContainerDb(payment_db, "Payment DB", "PostgreSQL", "Платежи, попытки и статусы.", $tags="database+payment")
+
+    Container(notification_service, "Notification Service", "FastAPI / consumer", "Домен уведомлений.<br/>Шаблоны, каналы и история доставки.", $tags="notification")
+    ContainerDb(notification_db, "Notification DB", "PostgreSQL", "Шаблоны и история отправок.", $tags="database+notification")
+
+    ContainerQueue(kafka, "Apache Kafka", "Event Broker", "Доменные события.<br/>Асинхронная связь, слабая связанность, масштабирование и replay.", $tags="events")
+}
+
+' ============================================================
+' EXTERNAL SYSTEMS
+' ============================================================
+
+System_Ext(payment_provider, "Платёжный провайдер", "Эквайринг, карты и другие способы оплаты", $tags="external")
+System_Ext(notification_provider, "Email / SMS / Push", "Внешние каналы доставки уведомлений", $tags="external")
+
+System_Boundary(infrastructure, "Инфраструктура") {
+    System_Ext(observability, "Monitoring / Logging", "Метрики, алерты и логи — production слой", $tags="infra")
+}
+
+' ============================================================
+' CLIENT → GATEWAY
+' ============================================================
+
+Rel(buyer, api_gateway, "HTTPS / JSON", "sync")
+Rel(seller, api_gateway, "HTTPS / JSON", "sync")
+
+' ============================================================
+' GATEWAY → DOMAINS
+' ============================================================
+
+Rel(api_gateway, user_service, "Профиль, роли", "HTTP/REST")
+Rel(api_gateway, catalog_service, "Каталог", "HTTP/REST")
+Rel(api_gateway, feed_service, "Персональная лента", "HTTP/REST")
+Rel(api_gateway, order_service, "Checkout и заказы", "HTTP/REST")
+
+' ============================================================
+' OWNERSHIP
+' ============================================================
+
+Rel(user_service, user_db, "Владеет данными", "SQL")
+Rel(catalog_service, catalog_db, "Владеет данными", "SQL")
+Rel(feed_service, feed_db, "Владеет данными", "SQL")
+Rel(order_service, order_db, "Владеет данными", "SQL")
+Rel(payment_service, payment_db, "Владеет данными", "SQL")
+Rel(notification_service, notification_db, "Владеет данными", "SQL")
+
+' ============================================================
+' SYNCHRONOUS BUSINESS FLOW
+' ============================================================
+
+Rel(order_service, catalog_service, "Получение необходимых данных о товаре", "HTTP/REST, sync")
+Rel(order_service, payment_service, "Инициация платежа", "HTTP/REST, sync")
+Rel(payment_service, payment_provider, "Проведение платежа", "HTTPS/API, sync")
+Rel(notification_service, notification_provider, "Отправка уведомления", "HTTPS/API, sync")
+
+' ============================================================
+' ASYNCHRONOUS EVENTS — KAFKA
+' ============================================================
+
+Rel(user_service, kafka, "UserBehaviorRecorded", "async event")
+Rel(catalog_service, kafka, "CatalogChanged", "async event")
+Rel(order_service, kafka, "OrderCreated / OrderStatusChanged", "async event")
+Rel(payment_service, kafka, "PaymentStatusChanged", "async event")
+
+Rel(kafka, feed_service, "Сигналы пользователя<br/>и изменения каталога", "async event")
+Rel(kafka, notification_service, "OrderStatusChanged<br/>PaymentStatusChanged", "async event")
+
+' ============================================================
+' OBSERVABILITY — SHOWN AS FUTURE / TECHNICAL LAYER
+' ============================================================
+
+Rel(api_gateway, observability, "Метрики / логи", "technical")
+Rel(order_service, observability, "Метрики / логи", "technical")
+Rel(payment_service, observability, "Метрики / логи", "technical")
+
+' ============================================================
+' ARCHITECTURAL NOTES
+' ============================================================
+
+note right of kafka
+<b>Apache Kafka</b>
+
+• транспорт доменных событий
+• async communication
+• несколько независимых consumers
+• replay и повторная обработка
+• масштабирование consumers
+
+<b>Важно:</b> Kafka не является
+source of truth для заказов
+или платежей.
+end note
+
+note bottom of order_service
+<b>Checkout</b>
+
+Buyer → Gateway → Order → Payment
+
+Order → Payment — синхронно:
+результат нужен в текущем сценарии.
+
+После изменения статуса:
+Payment → Kafka → Notification
+
+Уведомления не блокируют checkout.
+end note
+
+note bottom of marketplace
+<b>Database per Service</b>
+
+Каждый сервис владеет своей БД.
+Shared DB отсутствует.
+
+Чужие БД не читаются напрямую.
+Взаимодействие с другими доменами —
+через API или доменные события Kafka.
+end note
+
+legend right
+|= Обозначение |= Значение |
+|<#EAF6EE> User | Домен пользователей |
+|<#EDF4FF> Catalog | Каталог товаров |
+|<#F3EEFF> Feed | Персонализация |
+|<#FFF5E3> Order | Заказы |
+|<#EAF9F8> Payment | Платежи |
+|<#FFF0F5> Notification | Уведомления |
+|<#FFF0F3> Kafka | Асинхронные события |
+| Синяя стрелка | Синхронное HTTP/API |
+| Красная стрелка | Асинхронное Kafka-событие |
+| Database | Собственная БД сервиса |
+endlegend
+
+@enduml
