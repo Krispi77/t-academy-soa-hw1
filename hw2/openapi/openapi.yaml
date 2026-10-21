@@ -1,0 +1,415 @@
+openapi: 3.0.3
+info:
+  title: Marketplace API
+  version: 1.0.0
+  description: |
+    API сервиса маркетплейса.
+
+    Текущая версия описывает CRUD для сущности `Product`.
+    Удаление товара — мягкое: запись не удаляется физически,
+    а переводится в статус `ARCHIVED`.
+
+servers:
+  - url: http://localhost:8080
+    description: Локальное окружение
+
+tags:
+  - name: Products
+    description: Управление каталогом товаров
+
+paths:
+  /products:
+    post:
+      tags: [Products]
+      operationId: createProduct
+      summary: Создание товара
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreate'
+      responses:
+        '201':
+          description: Товар создан
+          headers:
+            Location:
+              description: URL созданного товара
+              schema:
+                type: string
+                example: /products/3fa85f64-5717-4562-b3fc-2c963f66afa6
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+    get:
+      tags: [Products]
+      operationId: listProducts
+      summary: Список товаров с пагинацией и фильтрацией
+      description: |
+        Возвращает страницу товаров. Фильтры `status` и `category`
+        необязательны и комбинируются через логическое И.
+        Без фильтров возвращаются товары во всех статусах.
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+        - $ref: '#/components/parameters/StatusFilter'
+        - $ref: '#/components/parameters/CategoryFilter'
+      responses:
+        '200':
+          description: Страница товаров
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /products/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ProductId'
+
+    get:
+      tags: [Products]
+      operationId: getProductById
+      summary: Получение товара по ID
+      responses:
+        '200':
+          description: Найденный товар
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/ProductNotFound'
+
+    put:
+      tags: [Products]
+      operationId: updateProduct
+      summary: Обновление товара
+      description: |
+        Полная замена изменяемых полей товара: все обязательные поля
+        должны быть переданы. `id`, `created_at` и `updated_at`
+        управляются сервером и в запросе не передаются.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdate'
+      responses:
+        '200':
+          description: Товар обновлён
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/ProductNotFound'
+
+    delete:
+      tags: [Products]
+      operationId: deleteProduct
+      summary: Мягкое удаление товара
+      description: |
+        Переводит товар в статус `ARCHIVED`; запись в БД сохраняется.
+        Операция идемпотентна: повторный вызов для уже архивного товара
+        возвращает `200` с тем же состоянием.
+      responses:
+        '200':
+          description: Товар переведён в статус ARCHIVED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '404':
+          $ref: '#/components/responses/ProductNotFound'
+
+components:
+  parameters:
+    ProductId:
+      name: id
+      in: path
+      required: true
+      description: Идентификатор товара
+      schema:
+        type: string
+        format: uuid
+
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Номер страницы, начиная с 0
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+
+    Size:
+      name: size
+      in: query
+      required: false
+      description: Размер страницы
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    StatusFilter:
+      name: status
+      in: query
+      required: false
+      description: Фильтр по статусу товара
+      schema:
+        $ref: '#/components/schemas/ProductStatus'
+
+    CategoryFilter:
+      name: category
+      in: query
+      required: false
+      description: Фильтр по категории (точное совпадение)
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+        example: electronics
+
+  schemas:
+    ProductStatus:
+      type: string
+      description: Состояние товара
+      enum:
+        - ACTIVE
+        - INACTIVE
+        - ARCHIVED
+      example: ACTIVE
+
+    ProductCreate:
+      type: object
+      description: Тело запроса на создание товара
+      additionalProperties: false
+      required:
+        - name
+        - price
+        - stock
+        - category
+        - status
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Смартфон X100
+        description:
+          type: string
+          nullable: true
+          maxLength: 4000
+          example: 6.5" экран, 128 ГБ
+        price:
+          type: number
+          format: decimal
+          description: Цена товара, строго больше 0 (DECIMAL(12,2))
+          minimum: 0.01
+          maximum: 9999999999.99
+          example: 19990.00
+        stock:
+          type: integer
+          format: int32
+          description: Остаток на складе
+          minimum: 0
+          example: 15
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: electronics
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+
+    ProductUpdate:
+      type: object
+      description: Тело запроса на обновление товара (полная замена)
+      additionalProperties: false
+      required:
+        - name
+        - price
+        - stock
+        - category
+        - status
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          example: Смартфон X100 Pro
+        description:
+          type: string
+          nullable: true
+          maxLength: 4000
+          example: 6.5" экран, 256 ГБ
+        price:
+          type: number
+          format: decimal
+          description: Цена товара, строго больше 0 (DECIMAL(12,2))
+          minimum: 0.01
+          maximum: 9999999999.99
+          example: 24990.00
+        stock:
+          type: integer
+          format: int32
+          minimum: 0
+          example: 10
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+          example: electronics
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+
+    ProductResponse:
+      type: object
+      description: Товар в ответе API
+      required:
+        - id
+        - name
+        - description
+        - price
+        - stock
+        - category
+        - status
+        - created_at
+        - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+          example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+        name:
+          type: string
+          example: Смартфон X100
+        description:
+          type: string
+          nullable: true
+          description: null, если описание не задано
+          example: 6.5" экран, 128 ГБ
+        price:
+          type: number
+          format: decimal
+          example: 19990.00
+        stock:
+          type: integer
+          format: int32
+          example: 15
+        category:
+          type: string
+          example: electronics
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          example: '2026-10-21T10:15:30Z'
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          example: '2026-10-21T12:00:00Z'
+
+    ProductPage:
+      type: object
+      description: Страница списка товаров
+      required:
+        - content
+        - totalElements
+        - page
+        - size
+      properties:
+        content:
+          type: array
+          description: Товары на текущей странице
+          items:
+            $ref: '#/components/schemas/ProductResponse'
+        totalElements:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Общее количество товаров, подходящих под фильтр
+          example: 42
+        page:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Номер текущей страницы (с 0)
+          example: 0
+        size:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Размер страницы
+          example: 20
+
+    ErrorResponse:
+      type: object
+      description: Единый формат ошибки
+      required:
+        - error_code
+        - message
+      properties:
+        error_code:
+          type: string
+          description: Машиночитаемый код ошибки
+          example: PRODUCT_NOT_FOUND
+        message:
+          type: string
+          description: Человекочитаемое описание
+          example: Product with id 3fa85f64-5717-4562-b3fc-2c963f66afa6 not found
+        details:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: Дополнительные данные (опционально)
+
+  responses:
+    ValidationError:
+      description: Ошибка валидации входных данных
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: VALIDATION_ERROR
+            message: Request validation failed
+            details:
+              fields:
+                - field: price
+                  message: must be greater than or equal to 0.01
+                - field: name
+                  message: size must be between 1 and 255
+
+    ProductNotFound:
+      description: Товар не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: PRODUCT_NOT_FOUND
+            message: Product with id 3fa85f64-5717-4562-b3fc-2c963f66afa6 not found
+            details:
+              product_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
