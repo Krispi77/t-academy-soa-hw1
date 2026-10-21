@@ -1,0 +1,6 @@
+# Сгенерированный из OpenAPI код — создаётся командой `make generate`
+*.gen.go
+bin/
+.idea/
+.vscode/
+.DS_Store

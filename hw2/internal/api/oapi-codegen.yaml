@@ -1,0 +1,11 @@
+# Настройки генератора oapi-codegen.
+# Запуск: go generate ./...  (или make generate)
+package: api
+output: api.gen.go
+generate:
+  models: true          # структуры (DTO) из components/schemas
+  std-http-server: true # роутинг на стандартном net/http.ServeMux
+  strict-server: true   # типизированные запросы/ответы для хендлеров
+  embedded-spec: true   # спецификация вшивается в бинарник (нужна валидатору)
+compatibility:
+  always-prefix-enum-values: true # ProductStatusACTIVE вместо ACTIVE

@@ -9,6 +9,9 @@ info:
     Удаление товара — мягкое: запись не удаляется физически,
     а переводится в статус `ARCHIVED`.
 
+    Каждый ответ содержит заголовок `X-Request-Id` — уникальный
+    идентификатор запроса (UUID), по которому запрос можно найти в логах.
+
 servers:
   - url: http://localhost:8080
     description: Локальное окружение
@@ -44,15 +47,18 @@ paths:
                 $ref: '#/components/schemas/ProductResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
     get:
       tags: [Products]
       operationId: listProducts
       summary: Список товаров с пагинацией и фильтрацией
       description: |
-        Возвращает страницу товаров. Фильтры `status` и `category`
-        необязательны и комбинируются через логическое И.
-        Без фильтров возвращаются товары во всех статусах.
+        Возвращает страницу товаров, отсортированных по времени создания
+        (новые первыми). Фильтры `status` и `category` необязательны и
+        комбинируются через логическое И. Без фильтров возвращаются товары
+        во всех статусах.
       parameters:
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Size'
@@ -67,6 +73,8 @@ paths:
                 $ref: '#/components/schemas/ProductPage'
         '400':
           $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
   /products/{id}:
     parameters:
@@ -87,6 +95,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '404':
           $ref: '#/components/responses/ProductNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
     put:
       tags: [Products]
@@ -113,6 +123,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '404':
           $ref: '#/components/responses/ProductNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
     delete:
       tags: [Products]
@@ -133,6 +145,8 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '404':
           $ref: '#/components/responses/ProductNotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
 
 components:
   parameters:
@@ -197,6 +211,19 @@ components:
         - ARCHIVED
       example: ACTIVE
 
+    Price:
+      type: number
+      format: decimal
+      description: |
+        Цена товара, строго больше 0. Хранится как DECIMAL(12,2):
+        значение округляется до 2 знаков после запятой.
+      minimum: 0.01
+      maximum: 9999999999.99
+      example: 19990.00
+      x-go-type: decimal.Decimal
+      x-go-type-import:
+        path: github.com/shopspring/decimal
+
     ProductCreate:
       type: object
       description: Тело запроса на создание товара
@@ -219,12 +246,7 @@ components:
           maxLength: 4000
           example: 6.5" экран, 128 ГБ
         price:
-          type: number
-          format: decimal
-          description: Цена товара, строго больше 0 (DECIMAL(12,2))
-          minimum: 0.01
-          maximum: 9999999999.99
-          example: 19990.00
+          $ref: '#/components/schemas/Price'
         stock:
           type: integer
           format: int32
@@ -261,15 +283,11 @@ components:
           maxLength: 4000
           example: 6.5" экран, 256 ГБ
         price:
-          type: number
-          format: decimal
-          description: Цена товара, строго больше 0 (DECIMAL(12,2))
-          minimum: 0.01
-          maximum: 9999999999.99
-          example: 24990.00
+          $ref: '#/components/schemas/Price'
         stock:
           type: integer
           format: int32
+          description: Остаток на складе
           minimum: 0
           example: 10
         category:
@@ -297,7 +315,6 @@ components:
         id:
           type: string
           format: uuid
-          readOnly: true
           example: 3fa85f64-5717-4562-b3fc-2c963f66afa6
         name:
           type: string
@@ -308,9 +325,7 @@ components:
           description: null, если описание не задано
           example: 6.5" экран, 128 ГБ
         price:
-          type: number
-          format: decimal
-          example: 19990.00
+          $ref: '#/components/schemas/Price'
         stock:
           type: integer
           format: int32
@@ -323,12 +338,10 @@ components:
         created_at:
           type: string
           format: date-time
-          readOnly: true
           example: '2026-10-21T10:15:30Z'
         updated_at:
           type: string
           format: date-time
-          readOnly: true
           example: '2026-10-21T12:00:00Z'
 
     ProductPage:
@@ -364,6 +377,42 @@ components:
           description: Размер страницы
           example: 20
 
+    ErrorCode:
+      type: string
+      description: |
+        Каталог машиночитаемых кодов ошибок и соответствующих HTTP-статусов.
+
+        | Код                         | HTTP | Когда возвращается                                |
+        |-----------------------------|------|---------------------------------------------------|
+        | `PRODUCT_NOT_FOUND`         | 404  | Товар не найден по ID                             |
+        | `PRODUCT_INACTIVE`          | 409  | Попытка заказать неактивный товар                 |
+        | `ORDER_NOT_FOUND`           | 404  | Заказ не найден по ID                             |
+        | `ORDER_LIMIT_EXCEEDED`      | 429  | Превышен лимит частоты создания/обновления заказа |
+        | `ORDER_HAS_ACTIVE`          | 409  | У пользователя уже есть активный заказ            |
+        | `INVALID_STATE_TRANSITION`  | 409  | Недопустимый переход состояния заказа             |
+        | `INSUFFICIENT_STOCK`        | 409  | Недостаточно товара на складе                     |
+        | `PROMO_CODE_INVALID`        | 422  | Промокод не найден, истёк, исчерпан или неактивен |
+        | `PROMO_CODE_MIN_AMOUNT`     | 422  | Сумма заказа ниже минимальной для промокода       |
+        | `ORDER_OWNERSHIP_VIOLATION` | 403  | Заказ принадлежит другому пользователю            |
+        | `VALIDATION_ERROR`          | 400  | Ошибка валидации входных данных                   |
+        | `INTERNAL_ERROR`            | 500  | Непредвиденная ошибка сервера                     |
+
+        Коды заказов и промокодов зарезервированы для API заказов.
+      enum:
+        - PRODUCT_NOT_FOUND
+        - PRODUCT_INACTIVE
+        - ORDER_NOT_FOUND
+        - ORDER_LIMIT_EXCEEDED
+        - ORDER_HAS_ACTIVE
+        - INVALID_STATE_TRANSITION
+        - INSUFFICIENT_STOCK
+        - PROMO_CODE_INVALID
+        - PROMO_CODE_MIN_AMOUNT
+        - ORDER_OWNERSHIP_VIOLATION
+        - VALIDATION_ERROR
+        - INTERNAL_ERROR
+      example: PRODUCT_NOT_FOUND
+
     ErrorResponse:
       type: object
       description: Единый формат ошибки
@@ -372,9 +421,7 @@ components:
         - message
       properties:
         error_code:
-          type: string
-          description: Машиночитаемый код ошибки
-          example: PRODUCT_NOT_FOUND
+          $ref: '#/components/schemas/ErrorCode'
         message:
           type: string
           description: Человекочитаемое описание
@@ -387,7 +434,9 @@ components:
 
   responses:
     ValidationError:
-      description: Ошибка валидации входных данных
+      description: |
+        Ошибка валидации входных данных (`VALIDATION_ERROR`).
+        В `details.fields` перечислены поля и нарушенные ограничения.
       content:
         application/json:
           schema:
@@ -398,12 +447,12 @@ components:
             details:
               fields:
                 - field: price
-                  message: must be greater than or equal to 0.01
+                  message: number must be at least 0.01
                 - field: name
-                  message: size must be between 1 and 255
+                  message: minimum string length is 1
 
     ProductNotFound:
-      description: Товар не найден
+      description: Товар не найден (`PRODUCT_NOT_FOUND`)
       content:
         application/json:
           schema:
@@ -413,3 +462,13 @@ components:
             message: Product with id 3fa85f64-5717-4562-b3fc-2c963f66afa6 not found
             details:
               product_id: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+
+    InternalError:
+      description: Непредвиденная ошибка сервера (`INTERNAL_ERROR`)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error_code: INTERNAL_ERROR
+            message: Internal server error
